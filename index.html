@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#111111">
+  <link rel="manifest" href="manifest.json">
+  <title>Wheelie Tracker</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:#111; color:#fff; min-height:100vh; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+    .wrap { max-width:640px; margin:auto; }
+    h1 { font-size:28px; margin:18px 0 8px; }
+    .muted { color:#aaa; font-size:14px; }
+    .card { background:#1d1d1f; border-radius:18px; padding:18px; margin:14px 0; }
+    .hero { text-align:center; padding:24px 18px; }
+    .state { font-size:18px; font-weight:700; letter-spacing:.06em; }
+    .timer { font-size:64px; font-weight:800; margin:8px 0 2px; font-variant-numeric:tabular-nums; }
+    .distance { font-size:32px; font-weight:700; }
+    .angleHero { font-size:28px; font-weight:700; margin-top:6px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .metric { background:#29292c; border-radius:14px; padding:14px; }
+    .metric b { display:block; font-size:24px; margin-top:4px; }
+    button { width:100%; border:0; border-radius:14px; padding:16px; margin-top:10px; font-size:18px; font-weight:700; }
+    .primary { background:#fff; color:#111; }
+    .secondary { background:#2e2e31; color:#fff; }
+    .danger { background:#5a1e1e; color:#fff; }
+    #status.good { color:#74d27b; }
+    #status.warn { color:#ffd166; }
+    .row { display:flex; gap:10px; }
+    .row button { flex:1; }
+    details { margin-top:12px; }
+    input[type=range] { width:100%; }
+    .small { font-size:12px; color:#aaa; line-height:1.4; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Wheelie Tracker</h1>
+  <div class="muted">iPhone motion + GPS. Keep the phone firmly mounted to the bike.</div>
+
+  <div class="card hero">
+    <div id="status" class="state warn">NOT STARTED</div>
+    <div id="timer" class="timer">0.0</div>
+    <div id="distance" class="distance">0.0 m</div>
+    <div id="wheelieAngle" class="angleHero">0.0°</div>
+    <div class="muted">
+      <span id="pitch">Phone pitch: --°</span> ·
+      <span id="speed">Speed: -- km/h</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="metric">Wheelies<b id="count">0</b></div>
+    <div class="metric">Total distance<b id="totalDistance">0.0 m</b></div>
+    <div class="metric">Best time<b id="bestTime">0.0 s</b></div>
+    <div class="metric">Best distance<b id="bestDistance">0.0 m</b></div>
+    <div class="metric">Current max angle<b id="currentMaxAngle">0.0°</b></div>
+    <div class="metric">Highest angle<b id="bestAngle">0.0°</b></div>
+  </div>
+
+  <div class="card">
+    <button id="startBtn" class="primary">START RIDE</button>
+    <button id="calibrateBtn" class="secondary">CALIBRATE NORMAL RIDING ANGLE</button>
+    <div class="row">
+      <button id="stopBtn" class="danger">STOP</button>
+      <button id="resetBtn" class="secondary">RESET STATS</button>
+    </div>
+    <p id="calibrationText" class="small">Calibration: not set</p>
+  </div>
+
+  <div class="card">
+    <b>Last wheelie</b>
+    <p id="lastWheelie">None yet</p>
+    <details>
+      <summary>Detection settings</summary>
+      <p class="small">Defaults are conservative starting values. Calibrate first, then adjust only if needed.</p>
+      <label>Start angle above baseline: <span id="startAngleLabel">14</span>°</label>
+      <input id="startAngle" type="range" min="8" max="30" value="14">
+      <label>End angle above baseline: <span id="endAngleLabel">8</span>°</label>
+      <input id="endAngle" type="range" min="4" max="20" value="8">
+      <label>Minimum wheelie duration: <span id="minDurationLabel">0.8</span>s</label>
+      <input id="minDuration" type="range" min="0.3" max="2.5" step="0.1" value="0.8">
+      <label>Minimum speed: <span id="minSpeedLabel">2.0</span> km/h</label>
+      <input id="minSpeed" type="range" min="0" max="10" step="0.5" value="2.0">
+    </details>
+  </div>
+
+  <div class="small">
+    Safety: mount the phone securely and do not interact with the screen while riding.
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
