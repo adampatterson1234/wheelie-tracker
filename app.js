@@ -2,7 +2,12 @@ let running = false;
 let calibrated = false;
 let baselinePitch = 0;
 let currentPitch = null;
+
+// Filtered GPS state
 let currentSpeedMps = 0;
+let lastAcceptedGpsPoint = null;
+let speedSamples = [];
+let lastGpsStatus = 'Waiting for GPS';
 
 let wheelieActive = false;
 let wheelieCandidateSince = null;
@@ -12,7 +17,8 @@ let wheelieDistance = 0;
 let wheelieMaxAngle = 0;
 let lastTick = performance.now();
 
-let stats = JSON.parse(localStorage.getItem('wheelieStatsV2') || '{"count":0,"totalDistance":0,"bestTime":0,"bestDistance":0,"bestAngle":0}');
+let stats = JSON.parse(localStorage.getItem('wheelieStatsV3') ||
+  '{"count":0,"totalDistance":0,"bestTime":0,"bestDistance":0,"bestAngle":0}');
 if (typeof stats.bestAngle !== 'number') stats.bestAngle = 0;
 
 let wakeLock = null;
@@ -21,7 +27,7 @@ let watchId = null;
 const $ = id => document.getElementById(id);
 
 function saveStats() {
-  localStorage.setItem('wheelieStatsV2', JSON.stringify(stats));
+  localStorage.setItem('wheelieStatsV3', JSON.stringify(stats));
 }
 
 function updateStatsUI() {
@@ -47,11 +53,13 @@ function wheelieAngle() {
 }
 
 async function requestMotionPermission() {
-  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+  if (typeof DeviceMotionEvent !== 'undefined' &&
+      typeof DeviceMotionEvent.requestPermission === 'function') {
     const r = await DeviceMotionEvent.requestPermission();
     if (r !== 'granted') throw new Error('Motion permission not granted');
   }
-  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  if (typeof DeviceOrientationEvent !== 'undefined' &&
+      typeof DeviceOrientationEvent.requestPermission === 'function') {
     const r = await DeviceOrientationEvent.requestPermission();
     if (r !== 'granted') throw new Error('Orientation permission not granted');
   }
@@ -68,16 +76,107 @@ function onOrientation(e) {
   $('wheelieAngle').textContent = a == null ? '--°' : `${a.toFixed(1)}°`;
 }
 
+function haversineMeters(a, b) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const x = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon/2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a,b)=>a-b);
+  const m = Math.floor(s.length/2);
+  return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
+}
+
+function filteredSpeedFromSamples() {
+  if (!speedSamples.length) return 0;
+
+  // Median suppresses single-sample GPS spikes.
+  const med = median(speedSamples);
+
+  // Blend median with recent accepted speed for a smoother display.
+  return currentSpeedMps === 0 ? med : (0.65 * currentSpeedMps + 0.35 * med);
+}
+
 function onLocation(pos) {
   const c = pos.coords;
-  if (typeof c.speed === 'number' && c.speed >= 0) {
-    currentSpeedMps = c.speed;
+  const point = {
+    lat: c.latitude,
+    lon: c.longitude,
+    time: pos.timestamp,
+    accuracy: c.accuracy
+  };
+
+  // Reject very poor fixes. Accuracy is radius in metres.
+  if (typeof c.accuracy === 'number' && c.accuracy > 35) {
+    lastGpsStatus = `GPS weak (${Math.round(c.accuracy)} m)`;
+    $('speed').textContent = `Filtered speed: ${(currentSpeedMps * 3.6).toFixed(1)} km/h`;
+    return;
   }
-  $('speed').textContent = `Speed: ${(currentSpeedMps * 3.6).toFixed(1)} km/h`;
+
+  if (lastAcceptedGpsPoint) {
+    const dt = (point.time - lastAcceptedGpsPoint.time) / 1000;
+
+    if (dt >= 0.25 && dt <= 5) {
+      const d = haversineMeters(lastAcceptedGpsPoint, point);
+      const derivedSpeed = d / dt;
+      const derivedKmh = derivedSpeed * 3.6;
+
+      // Reject implausible jumps for this use case.
+      // 80 km/h is intentionally generous so normal riding is never clipped.
+      const plausible = derivedKmh <= 80 && d <= 60;
+
+      // Ignore tiny movements that are smaller than the GPS uncertainty floor.
+      const noiseFloor = Math.max(0.8, Math.min(3.0, (c.accuracy || 5) * 0.18));
+      const meaningfulMove = d >= noiseFloor;
+
+      if (plausible) {
+        const sample = meaningfulMove ? derivedSpeed : 0;
+
+        speedSamples.push(sample);
+        if (speedSamples.length > 5) speedSamples.shift();
+        currentSpeedMps = filteredSpeedFromSamples();
+
+        // Wheelie distance is accumulated from accepted GPS path segments,
+        // not from raw iPhone coords.speed.
+        if (wheelieActive && meaningfulMove) {
+          wheelieDistance += d;
+        }
+
+        lastAcceptedGpsPoint = point;
+        lastGpsStatus = `GPS ±${Math.round(c.accuracy || 0)} m`;
+      } else {
+        // Do not advance the accepted point on a clear spike.
+        lastGpsStatus = 'GPS spike rejected';
+      }
+    } else if (dt > 5) {
+      // Long gap: reset without using the gap for distance.
+      lastAcceptedGpsPoint = point;
+      speedSamples = [];
+      currentSpeedMps = 0;
+      lastGpsStatus = 'GPS reacquired';
+    }
+  } else {
+    lastAcceptedGpsPoint = point;
+    lastGpsStatus = `GPS ±${Math.round(c.accuracy || 0)} m`;
+  }
+
+  $('speed').textContent = `Filtered speed: ${(currentSpeedMps * 3.6).toFixed(1)} km/h`;
 }
 
 function startGps() {
   if (!navigator.geolocation) throw new Error('GPS not supported');
+
+  lastAcceptedGpsPoint = null;
+  speedSamples = [];
+  currentSpeedMps = 0;
+
   watchId = navigator.geolocation.watchPosition(
     onLocation,
     err => {
@@ -85,7 +184,11 @@ function startGps() {
       $('status').className = 'state warn';
       console.warn(err);
     },
-    { enableHighAccuracy: true, maximumAge: 250, timeout: 10000 }
+    {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 10000
+    }
   );
 }
 
@@ -138,7 +241,6 @@ function endWheelie(now) {
 }
 
 function tick(now) {
-  const dt = Math.min((now - lastTick) / 1000, 0.25);
   lastTick = now;
 
   if (running && calibrated && currentPitch != null) {
@@ -156,7 +258,6 @@ function tick(now) {
         wheelieCandidateSince = null;
       }
     } else {
-      wheelieDistance += currentSpeedMps * dt;
       const duration = (now - wheelieStart) / 1000;
 
       if (relAngle > wheelieMaxAngle) {
@@ -217,6 +318,10 @@ $('stopBtn').addEventListener('click', async () => {
   if (watchId != null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
 
+  lastAcceptedGpsPoint = null;
+  speedSamples = [];
+  currentSpeedMps = 0;
+
   try { if (wakeLock) await wakeLock.release(); } catch {}
   wakeLock = null;
 
@@ -225,6 +330,7 @@ $('stopBtn').addEventListener('click', async () => {
   $('timer').textContent = '0.0';
   $('distance').textContent = '0.0 m';
   $('currentMaxAngle').textContent = '0.0°';
+  $('speed').textContent = 'Filtered speed: -- km/h';
 });
 
 $('resetBtn').addEventListener('click', () => {
